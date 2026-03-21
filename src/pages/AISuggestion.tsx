@@ -111,6 +111,29 @@ export default function AISuggestion() {
   const [planName, setPlanName] = useState('');
   const [showSavedPlans, setShowSavedPlans] = useState(false);
   const [addingToQuick, setAddingToQuick] = useState(false);
+  const [editingWeight, setEditingWeight] = useState<string | null>(null); // "quick-0", "Monday-2", etc.
+
+  function updateQuickWeight(index: number, newWeight: number | null) {
+    setQuickSuggestion(prev => prev ? {
+      ...prev,
+      exercises: prev.exercises.map((ex, i) => i === index ? { ...ex, weight: newWeight } : ex)
+    } : prev);
+    setQuickLogged(false);
+  }
+
+  function updateWeeklyWeight(day: string, exIndex: number, newWeight: number | null) {
+    if (!weeklyPlan) return;
+    const updated = {
+      ...weeklyPlan,
+      days: weeklyPlan.days.map(d => {
+        if (d.day !== day) return d;
+        return { ...d, exercises: d.exercises.map((ex, i) => i === exIndex ? { ...ex, weight: newWeight } : ex) };
+      }),
+    };
+    saveActivePlan(updated);
+    setWeeklyPlan(updated);
+    setLoggedDays(prev => { const n = new Set(prev); n.delete(day); return n; });
+  }
 
   const [schedule, setSchedule] = useState<Record<string, string[]>>({
     Monday: ['chest', 'triceps'], Tuesday: ['rest'], Wednesday: ['back', 'biceps'],
@@ -375,7 +398,29 @@ export default function AISuggestion() {
                   <span className="text-xs text-gray-500 mt-1 uppercase tracking-tighter font-bold">{ex.sets} sets × {ex.reps} reps</span>
                 </button>
                 <div className="flex items-center gap-2 ml-2 flex-shrink-0">
-                  <span className="text-cyan-400 font-bold">{ex.weight ? `${ex.weight}kg` : 'Bwt'}</span>
+                  {editingWeight === `quick-${i}` ? (
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      autoFocus
+                      defaultValue={ex.weight ?? ''}
+                      placeholder="Bwt"
+                      className="w-16 bg-white/[0.06] border border-cyan-500/30 rounded-lg py-1 px-2 text-center text-cyan-400 text-sm font-bold outline-none"
+                      onBlur={(e) => {
+                        const val = e.target.value.trim();
+                        updateQuickWeight(i, val ? Number(val) : null);
+                        setEditingWeight(null);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                      }}
+                    />
+                  ) : (
+                    <button onClick={() => setEditingWeight(`quick-${i}`)}
+                      className="text-cyan-400 font-bold hover:bg-white/5 px-2 py-1 rounded-lg transition"
+                      title="Tap to edit weight"
+                    >{ex.weight ? `${ex.weight}kg` : 'Bwt'}</button>
+                  )}
                   <button onClick={() => removeExerciseFromQuick(i)} className="p-1.5 rounded-lg bg-white/5 hover:bg-red-500/15 text-gray-500 hover:text-red-400 transition">
                     <Trash2 size={13} />
                   </button>
@@ -505,7 +550,29 @@ export default function AISuggestion() {
                                     <span className="text-[10px] font-bold text-gray-600 uppercase mt-0.5 block">{ex.sets} × {ex.reps} • {ex.primaryMuscle}</span>
                                   </button>
                                   <div className="flex items-center gap-2 ml-2 flex-shrink-0">
-                                    <span className="text-sm font-bold text-cyan-400">{ex.weight ? `${ex.weight}kg` : 'Bwt'}</span>
+                                    {editingWeight === `${day.day}-${i}` ? (
+                                      <input
+                                        type="number"
+                                        inputMode="decimal"
+                                        autoFocus
+                                        defaultValue={ex.weight ?? ''}
+                                        placeholder="Bwt"
+                                        className="w-16 bg-white/[0.06] border border-cyan-500/30 rounded-lg py-1 px-2 text-center text-cyan-400 text-sm font-bold outline-none"
+                                        onBlur={(e) => {
+                                          const val = e.target.value.trim();
+                                          updateWeeklyWeight(day.day, i, val ? Number(val) : null);
+                                          setEditingWeight(null);
+                                        }}
+                                        onKeyDown={(e) => {
+                                          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                                        }}
+                                      />
+                                    ) : (
+                                      <button onClick={() => setEditingWeight(`${day.day}-${i}`)}
+                                        className="text-sm font-bold text-cyan-400 hover:bg-white/5 px-2 py-1 rounded-lg transition"
+                                        title="Tap to edit weight"
+                                      >{ex.weight ? `${ex.weight}kg` : 'Bwt'}</button>
+                                    )}
                                     <button onClick={() => startSwap(day.day, i, ex)} title="Swap"
                                       className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-500 hover:text-white transition"><RefreshCw size={13} /></button>
                                     <button onClick={() => removeExerciseFromDay(day.day, i)} title="Remove"
