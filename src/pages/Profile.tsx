@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { motion } from 'framer-motion';
 import {
   User, Ruler, Weight, Target, Dumbbell,
   ChevronRight, CheckCircle2, Sparkles
@@ -20,9 +21,7 @@ export function loadProfile(): UserProfile | null {
     const raw = localStorage.getItem(PROFILE_KEY);
     if (!raw) return null;
     return JSON.parse(raw) as UserProfile;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 export function saveProfile(profile: UserProfile) {
@@ -41,7 +40,6 @@ const LEVELS = [
   { value: 'advanced',     label: 'Advanced',     desc: '3+ years training' },
 ] as const;
 
-// BMI-based goal suggestion
 function suggestGoal(height: number, weight: number): UserProfile['goal'] | null {
   if (!height || !weight || height < 50 || weight < 20) return null;
   const bmi = weight / ((height / 100) ** 2);
@@ -56,9 +54,7 @@ const GOAL_SUGGESTION_REASON: Record<string, string> = {
   maintain:     'Your BMI looks great! Maintaining your fitness is a solid goal.',
 };
 
-interface Props {
-  isSetup?: boolean;
-}
+interface Props { isSetup?: boolean; }
 
 export default function Profile({ isSetup = false }: Props) {
   const navigate = useNavigate();
@@ -82,194 +78,158 @@ export default function Profile({ isSetup = false }: Props) {
     if (!w || w < 20 || w > 500) return setError('Enter a valid weight (20–500 kg)');
     if (!a || a < 10 || a > 100) return setError('Enter a valid age (10–100)');
     setError(null);
-
     saveProfile({ height: h, weight: w, age: a, goal, level });
-
-    if (isSetup) {
-      navigate('/dashboard');
-    } else {
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-    }
+    if (isSetup) { navigate('/dashboard'); }
+    else { setSaved(true); setTimeout(() => setSaved(false), 2000); }
   }
 
   return (
-    <div className="min-h-screen bg-[#0f0f0f] text-white">
-      <div className="pt-10 pb-24 px-6 max-w-lg mx-auto font-sans">
+    <div className="min-h-screen bg-[#0A0A0F] text-white relative overflow-hidden grain">
+      {/* Background orbs */}
+      <div className="fixed inset-0 pointer-events-none" aria-hidden="true">
+        <div className="orb orb-cyan w-[400px] h-[400px] -top-32 -right-24 opacity-15" />
+        <div className="orb orb-purple w-[500px] h-[500px] bottom-0 -left-32 opacity-10" />
+      </div>
 
-        {/* Header */}
-        <div className="mb-10">
+      <div className="pt-10 pb-24 px-6 max-w-lg mx-auto font-sans relative z-10">
+
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mb-10">
           {isSetup ? (
             <>
               <div className="flex items-center gap-3 mb-3">
-                <div className="bg-blue-500/20 p-3 rounded-2xl">
-                  <Dumbbell size={28} className="text-blue-500" />
+                <div className="bg-cyan-500/10 border border-cyan-500/20 p-3 rounded-2xl">
+                  <Dumbbell size={28} className="text-cyan-400" />
                 </div>
-                <h1 className="text-4xl font-bold">Welcome!</h1>
+                <h1 className="text-4xl font-extrabold">
+                  <span className="text-gradient">Welcome!</span>
+                </h1>
               </div>
-              <p className="text-gray-500 text-lg">
-                Let's set up your profile so AI can personalize your workouts.
-              </p>
+              <p className="text-gray-500 text-lg">Let's set up your profile so AI can personalize your workouts.</p>
             </>
           ) : (
             <>
-              <h1 className="text-4xl font-bold mb-2">Profile</h1>
+              <h1 className="text-4xl font-extrabold mb-2">Profile</h1>
               <p className="text-gray-500 text-lg">Your stats power the AI suggestions.</p>
             </>
           )}
-        </div>
+        </motion.div>
 
         {error && (
-          <div className="mb-6 p-4 bg-red-900/20 border border-red-900/30 rounded-2xl text-red-400 text-sm">
+          <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="mb-6 p-4 glass bg-red-500/[0.06] border-red-500/20 rounded-2xl text-red-400 text-sm">
             {error}
-          </div>
+          </motion.div>
         )}
 
         <div className="space-y-5">
-
           {/* Height */}
-          <div className="bg-[#111] border border-[#222] rounded-2xl p-5">
-            <label className="flex items-center gap-2 text-xs font-bold text-gray-500 uppercase tracking-widest mb-3">
-              <Ruler size={14} /> Height (cm)
+          <div className="glass rounded-2xl p-5">
+            <label className="flex items-center gap-2 text-[10px] font-bold text-gray-500 uppercase tracking-[0.15em] mb-3">
+              <Ruler size={14} className="text-cyan-400" /> Height (cm)
             </label>
-            <input
-              type="number"
-              value={height}
-              onChange={e => setHeight(e.target.value)}
-              placeholder="e.g. 178"
-              className="w-full bg-transparent text-3xl font-bold text-white outline-none placeholder-gray-700"
-            />
+            <input type="number" value={height} onChange={e => setHeight(e.target.value)} placeholder="e.g. 178"
+              className="w-full bg-transparent text-3xl font-extrabold text-white outline-none placeholder-gray-700" />
           </div>
 
           {/* Weight */}
-          <div className="bg-[#111] border border-[#222] rounded-2xl p-5">
-            <label className="flex items-center gap-2 text-xs font-bold text-gray-500 uppercase tracking-widest mb-3">
-              <Weight size={14} /> Weight (kg)
+          <div className="glass rounded-2xl p-5">
+            <label className="flex items-center gap-2 text-[10px] font-bold text-gray-500 uppercase tracking-[0.15em] mb-3">
+              <Weight size={14} className="text-cyan-400" /> Weight (kg)
             </label>
-            <input
-              type="number"
-              value={weight}
-              onChange={e => setWeight(e.target.value)}
-              placeholder="e.g. 75"
-              className="w-full bg-transparent text-3xl font-bold text-white outline-none placeholder-gray-700"
-            />
+            <input type="number" value={weight} onChange={e => setWeight(e.target.value)} placeholder="e.g. 75"
+              className="w-full bg-transparent text-3xl font-extrabold text-white outline-none placeholder-gray-700" />
           </div>
 
           {/* Age */}
-          <div className="bg-[#111] border border-[#222] rounded-2xl p-5">
-            <label className="flex items-center gap-2 text-xs font-bold text-gray-500 uppercase tracking-widest mb-3">
-              <User size={14} /> Age
+          <div className="glass rounded-2xl p-5">
+            <label className="flex items-center gap-2 text-[10px] font-bold text-gray-500 uppercase tracking-[0.15em] mb-3">
+              <User size={14} className="text-cyan-400" /> Age
             </label>
-            <input
-              type="number"
-              value={age}
-              onChange={e => setAge(e.target.value)}
-              placeholder="e.g. 23"
-              className="w-full bg-transparent text-3xl font-bold text-white outline-none placeholder-gray-700"
-            />
+            <input type="number" value={age} onChange={e => setAge(e.target.value)} placeholder="e.g. 23"
+              className="w-full bg-transparent text-3xl font-extrabold text-white outline-none placeholder-gray-700" />
           </div>
 
           {/* AI Goal Suggestion */}
           {suggestedGoal && (
-            <div className="bg-blue-900/10 border border-blue-900/30 rounded-2xl p-4 flex items-start gap-3">
-              <Sparkles size={16} className="text-blue-400 mt-0.5 flex-shrink-0" />
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+              className="glass bg-cyan-500/[0.04] border-cyan-500/15 rounded-2xl p-4 flex items-start gap-3">
+              <Sparkles size={16} className="text-cyan-400 mt-0.5 flex-shrink-0" />
               <div>
-                <p className="text-blue-400 text-xs font-bold uppercase tracking-widest mb-1">
-                  AI Suggestion
-                </p>
-                <p className="text-gray-300 text-sm">
-                  {GOAL_SUGGESTION_REASON[suggestedGoal]}
-                </p>
+                <p className="text-cyan-400 text-[10px] font-bold uppercase tracking-[0.15em] mb-1">AI Suggestion</p>
+                <p className="text-gray-300 text-sm">{GOAL_SUGGESTION_REASON[suggestedGoal]}</p>
                 {goal !== suggestedGoal && (
-                  <button
-                    onClick={() => setGoal(suggestedGoal)}
-                    className="mt-2 text-blue-400 text-xs font-bold underline underline-offset-2"
-                  >
+                  <button onClick={() => setGoal(suggestedGoal)} className="mt-2 text-cyan-400 text-xs font-bold underline underline-offset-2">
                     Apply suggestion →
                   </button>
                 )}
                 {goal === suggestedGoal && (
-                  <p className="mt-2 text-green-400 text-xs font-bold flex items-center gap-1">
-                    <CheckCircle2 size={12} /> Applied
-                  </p>
+                  <p className="mt-2 text-green-400 text-xs font-bold flex items-center gap-1"><CheckCircle2 size={12} /> Applied</p>
                 )}
               </div>
-            </div>
+            </motion.div>
           )}
 
           {/* Goal */}
           <div>
-            <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3 flex items-center gap-2">
-              <Target size={14} /> Fitness Goal
+            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-[0.15em] mb-3 flex items-center gap-2">
+              <Target size={14} className="text-cyan-400" /> Fitness Goal
             </p>
             <div className="space-y-2">
               {GOALS.map(g => (
-                <button
-                  key={g.value}
-                  onClick={() => setGoal(g.value)}
-                  className={`w-full p-4 rounded-2xl border text-left transition-all flex items-center justify-between ${
+                <motion.button key={g.value} whileTap={{ scale: 0.98 }} onClick={() => setGoal(g.value)}
+                  className={`w-full p-4 rounded-2xl text-left transition-all flex items-center justify-between ${
                     goal === g.value
-                      ? 'bg-blue-900/20 border-blue-500/50 text-white'
-                      : 'bg-[#111] border-[#222] text-gray-400 hover:border-gray-600'
+                      ? 'glass bg-cyan-500/[0.06] border-cyan-500/25 text-white glow-cyan'
+                      : 'glass text-gray-400 hover:border-white/15'
                   }`}
                 >
                   <div>
                     <p className="font-bold text-sm flex items-center gap-2">
                       {g.label}
                       {suggestedGoal === g.value && (
-                        <span className="text-[10px] bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded-full font-bold">
-                          Suggested
-                        </span>
+                        <span className="text-[10px] bg-cyan-500/15 text-cyan-400 px-2 py-0.5 rounded-full font-bold">Suggested</span>
                       )}
                     </p>
                     <p className="text-xs text-gray-500 mt-0.5">{g.desc}</p>
                   </div>
-                  {goal === g.value && <ChevronRight size={16} className="text-blue-500 flex-shrink-0" />}
-                </button>
+                  {goal === g.value && <ChevronRight size={16} className="text-cyan-400 flex-shrink-0" />}
+                </motion.button>
               ))}
             </div>
           </div>
 
           {/* Level */}
           <div>
-            <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3 flex items-center gap-2">
-              <Dumbbell size={14} /> Fitness Level
+            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-[0.15em] mb-3 flex items-center gap-2">
+              <Dumbbell size={14} className="text-cyan-400" /> Fitness Level
             </p>
             <div className="space-y-2">
               {LEVELS.map(l => (
-                <button
-                  key={l.value}
-                  onClick={() => setLevel(l.value)}
-                  className={`w-full p-4 rounded-2xl border text-left transition-all flex items-center justify-between ${
+                <motion.button key={l.value} whileTap={{ scale: 0.98 }} onClick={() => setLevel(l.value)}
+                  className={`w-full p-4 rounded-2xl text-left transition-all flex items-center justify-between ${
                     level === l.value
-                      ? 'bg-blue-900/20 border-blue-500/50 text-white'
-                      : 'bg-[#111] border-[#222] text-gray-400 hover:border-gray-600'
+                      ? 'glass bg-cyan-500/[0.06] border-cyan-500/25 text-white glow-cyan'
+                      : 'glass text-gray-400 hover:border-white/15'
                   }`}
                 >
                   <div>
                     <p className="font-bold text-sm">{l.label}</p>
                     <p className="text-xs text-gray-500 mt-0.5">{l.desc}</p>
                   </div>
-                  {level === l.value && <ChevronRight size={16} className="text-blue-500 flex-shrink-0" />}
-                </button>
+                  {level === l.value && <ChevronRight size={16} className="text-cyan-400 flex-shrink-0" />}
+                </motion.button>
               ))}
             </div>
           </div>
 
           {/* Save */}
-          <button
-            onClick={handleSave}
-            className="w-full py-5 bg-[#3B82F6] hover:bg-blue-500 text-white rounded-2xl font-bold text-lg transition flex items-center justify-center gap-2 shadow-xl shadow-blue-900/10"
-          >
-            {saved ? (
-              <><CheckCircle2 size={20} /> Saved!</>
-            ) : isSetup ? (
-              <>Let's Go <ChevronRight size={20} /></>
-            ) : (
-              <>Save Profile</>
-            )}
-          </button>
-
+          <motion.button whileTap={{ scale: 0.98 }} onClick={handleSave} className="w-full relative group">
+            <div className="absolute inset-0 rounded-2xl bg-gradient-to-r from-cyan-500/20 to-purple-500/20 blur-xl opacity-60 group-hover:opacity-100 transition-opacity duration-500" />
+            <div className="relative py-5 bg-gradient-to-r from-cyan-500 to-purple-500 hover:from-cyan-400 hover:to-purple-400 text-white rounded-2xl font-bold text-lg flex items-center justify-center gap-2 transition-all shadow-lg shadow-cyan-500/15">
+              {saved ? ( <><CheckCircle2 size={20} /> Saved!</> )
+               : isSetup ? ( <>Let's Go <ChevronRight size={20} /></> )
+               : ( <>Save Profile</> )}
+            </div>
+          </motion.button>
         </div>
       </div>
     </div>
