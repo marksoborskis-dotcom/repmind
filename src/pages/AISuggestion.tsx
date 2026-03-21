@@ -4,9 +4,11 @@ import { loadProfile } from './Profile';
 import {
   BrainCircuit, CalendarDays, ChevronDown, ChevronUp,
   Save, CheckCircle2, ChevronRight, AlertTriangle,
-  RefreshCw, Plus, Trash2, Clock, Zap, BookMarked
+  RefreshCw, Plus, Trash2, Clock, Zap, BookMarked,
+  ClipboardCheck
 } from 'lucide-react';
 import ExerciseModal from '../components/ExerciseModal';
+import type { Session, MuscleGroup } from '../types/workout';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const MUSCLES = ['chest', 'back', 'legs', 'shoulders', 'biceps', 'triceps', 'abs', 'rest'];
@@ -16,6 +18,18 @@ const INTENSITIES = [
   { value: 'medium', label: 'Medium' },
   { value: 'high',   label: 'High' },
 ] as const;
+
+const MUSCLE_GROUP_MAP: Record<string, MuscleGroup> = {
+  chest: 'chest', back: 'back', legs: 'legs', shoulders: 'shoulders',
+  biceps: 'arms', triceps: 'arms', arms: 'arms', abs: 'core', core: 'core',
+};
+
+function toMuscleGroups(muscles: string[]): MuscleGroup[] {
+  const groups = muscles
+    .map(m => MUSCLE_GROUP_MAP[m.toLowerCase()])
+    .filter((g): g is MuscleGroup => !!g);
+  return [...new Set(groups)];
+}
 
 interface AIExercise {
   name: string;
@@ -58,6 +72,14 @@ type Intensity = 'low' | 'medium' | 'high';
 
 const ACTIVE_PLAN_KEY = 'repmind_weekly_plan';
 const SAVED_PLANS_KEY = 'repmind_saved_plans';
+
+function generateId(): string {
+  return `session_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function todayISO(): string {
+  return new Date().toISOString().split('T')[0];
+}
 
 function normalizePlan(plan: WeeklyPlan): WeeklyPlan {
   return {
@@ -147,8 +169,23 @@ function buildProfileContext(): string {
   return `User profile: Age ${p.age}, Height ${p.height}cm, Weight ${p.weight}kg, BMI ${bmi}, Goal: ${goalLabel}, Level: ${p.level}. Tailor weights, reps, and exercise complexity accordingly.`;
 }
 
+function aiExercisesToSession(exercises: AIExercise[], muscleNames: string[]): Session {
+  return {
+    id: generateId(),
+    date: todayISO(),
+    muscleGroups: toMuscleGroups(muscleNames),
+    exercises: exercises.map(ex => ({
+      name: ex.name,
+      sets: Array.from({ length: ex.sets }, () => ({
+        reps: ex.reps,
+        weight: ex.weight ?? 0,
+      })),
+    })),
+  };
+}
+
 export default function AISuggestion() {
-  const { sessions } = useWorkoutStore();
+  const { sessions, addSession } = useWorkoutStore();
   const [mode, setMode] = useState<Mode>('menu');
   const [quickSuggestion, setQuickSuggestion] = useState<QuickSuggestion | null>(null);
   const [weeklyPlan, setWeeklyPlan] = useState<WeeklyPlan | null>(() => loadActivePlan());
@@ -158,28 +195,20 @@ export default function AISuggestion() {
   const [error, setError] = useState<string | null>(null);
   const [expandedDay, setExpandedDay] = useState<string | null>(null);
   const [selectedExercise, setSelectedExercise] = useState<string | null>(null);
-
-  // Duration state
+  const [loggedDays, setLoggedDays] = useState<Set<string>>(new Set());
+  const [quickLogged, setQuickLogged] = useState(false);
   const [durationPreset, setDurationPreset] = useState('60 min');
   const [customDuration, setCustomDuration] = useState('');
   const [intensity, setIntensity] = useState<Intensity>('medium');
-
-  // Computed effective duration string
   const effectiveDuration = durationPreset === 'Custom'
     ? (customDuration ? `${customDuration} min` : '60 min')
     : durationPreset;
-
-  // Swap exercise
   const [swapping, setSwapping] = useState<{ day: string; exIndex: number } | null>(null);
   const [swapOptions, setSwapOptions] = useState<AIExercise[]>([]);
   const [swapLoading, setSwapLoading] = useState(false);
-
-  // Save plan modal
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [planName, setPlanName] = useState('');
   const [showSavedPlans, setShowSavedPlans] = useState(false);
-
-  // Adding extra exercise to quick suggestion
   const [addingToQuick, setAddingToQuick] = useState(false);
 
   const [schedule, setSchedule] = useState<Record<string, string[]>>({
@@ -214,12 +243,24 @@ export default function AISuggestion() {
     )];
   }
 
-  // ── QUICK SUGGESTION ──
+  function logQuickWorkout() {
+    if (!quickSuggestion) return;
+    const muscleNames = quickSuggestion.muscleGroup.split(/[&,]/).map(s => s.trim().toLowerCase());
+    addSession(aiExercisesToSession(quickSuggestion.exercises, muscleNames));
+    setQuickLogged(true);
+  }
+
+  function logDayWorkout(day: DayPlan) {
+    addSession(aiExercisesToSession(day.exercises, day.muscleGroups));
+    setLoggedDays(prev => new Set([...prev, day.day]));
+  }
+
   async function generateQuickSuggestion() {
     setLoading(true);
     setLoadingMsg('Building your session...');
     setError(null);
     setQuickSuggestion(null);
+    setQuickLogged(false);
     try {
       const recent = getRecentExercises();
       const prompt = `You are a fitness coach. Suggest ONE workout session for today.
@@ -227,7 +268,7 @@ ${buildProfileContext()}
 Duration: ${effectiveDuration}, Intensity: ${intensity}.
 Avoid recently done exercises: ${JSON.stringify(recent)}.
 Split "Arms" into Biceps and Triceps. Adjust exercise count to fit ${effectiveDuration}.
-Respond with ONLY a raw JSON object, no markdown, no explanation:
+Respond with ONLY a raw JSON object, no markdown:
 {
   "muscleGroup": "Chest & Triceps",
   "reason": "You haven't trained chest in 3 days.",
@@ -249,7 +290,6 @@ Respond with ONLY a raw JSON object, no markdown, no explanation:
     }
   }
 
-  // ── ADD EXERCISE TO QUICK SUGGESTION ──
   async function addExerciseToQuick() {
     if (!quickSuggestion) return;
     setAddingToQuick(true);
@@ -263,10 +303,8 @@ Respond with ONLY a raw JSON object, no markdown:
       const raw = await askClaude(prompt);
       const parsed = extractJSON(raw) as AIExercise;
       if (!parsed?.name) throw new Error('Invalid exercise from AI.');
-      setQuickSuggestion(prev => prev ? {
-        ...prev,
-        exercises: [...prev.exercises, parsed],
-      } : prev);
+      setQuickSuggestion(prev => prev ? { ...prev, exercises: [...prev.exercises, parsed] } : prev);
+      setQuickLogged(false);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
@@ -274,19 +312,18 @@ Respond with ONLY a raw JSON object, no markdown:
     }
   }
 
-  // ── REMOVE EXERCISE FROM QUICK SUGGESTION ──
   function removeExerciseFromQuick(index: number) {
-    setQuickSuggestion(prev => prev ? {
-      ...prev,
-      exercises: prev.exercises.filter((_, i) => i !== index),
-    } : prev);
+    setQuickSuggestion(prev => prev
+      ? { ...prev, exercises: prev.exercises.filter((_, i) => i !== index) }
+      : prev);
+    setQuickLogged(false);
   }
 
-  // ── WEEKLY PLAN ──
   async function generateWeeklyPlan() {
     setLoading(true);
     setLoadingMsg('Building your week...');
     setError(null);
+    setLoggedDays(new Set());
     try {
       const recent = getRecentExercises();
       const scheduleLines = Object.entries(schedule)
@@ -299,7 +336,7 @@ Schedule:\n${scheduleLines}
 Avoid: ${JSON.stringify(recent)}.
 Adjust exercises per day to fit ${effectiveDuration} at ${intensity} intensity.
 Rest days get exercises: [].
-Respond with ONLY a raw JSON object, no markdown, no explanation:
+Respond with ONLY a raw JSON object, no markdown:
 {
   "days": [
     {
@@ -332,15 +369,13 @@ Include all 7 days Monday to Sunday.`;
     }
   }
 
-  // ── SWAP EXERCISE ──
   async function startSwap(day: string, exIndex: number, ex: AIExercise) {
     setSwapping({ day, exIndex });
     setSwapLoading(true);
     setSwapOptions([]);
     try {
-      const prompt = `You are a fitness coach. Suggest 3 alternative exercises to replace "${ex.name}" (targets: ${ex.primaryMuscle}).
+      const prompt = `You are a fitness coach. Suggest 3 alternatives to replace "${ex.name}" targeting ${ex.primaryMuscle}.
 ${buildProfileContext()}
-All alternatives must target the same muscle: ${ex.primaryMuscle}.
 Respond with ONLY a raw JSON array, no markdown:
 [
   { "name": "Incline Bench Press", "sets": 4, "reps": 8, "weight": 70, "primaryMuscle": "${ex.primaryMuscle}" },
@@ -376,9 +411,9 @@ Respond with ONLY a raw JSON array, no markdown:
     setWeeklyPlan(updated);
     setSwapping(null);
     setSwapOptions([]);
+    setLoggedDays(prev => { const n = new Set(prev); n.delete(swapping.day); return n; });
   }
 
-  // ── ADD EXERCISE TO WEEKLY DAY ──
   async function addExerciseToDay(day: string, muscles: string[]) {
     if (!weeklyPlan) return;
     setLoadingMsg('Finding an exercise...');
@@ -388,7 +423,7 @@ Respond with ONLY a raw JSON array, no markdown:
       const prompt = `You are a fitness coach. Suggest ONE additional exercise for ${day}.
 Target muscles: ${muscles.join(', ')}.
 ${buildProfileContext()}
-Avoid these already in the plan: ${JSON.stringify(existing)}.
+Avoid: ${JSON.stringify(existing)}.
 Respond with ONLY a raw JSON object, no markdown:
 { "name": "Cable Fly", "sets": 3, "reps": 12, "weight": 20, "primaryMuscle": "chest" }`;
       const raw = await askClaude(prompt);
@@ -403,6 +438,7 @@ Respond with ONLY a raw JSON object, no markdown:
       };
       saveActivePlan(updated);
       setWeeklyPlan(updated);
+      setLoggedDays(prev => { const n = new Set(prev); n.delete(day); return n; });
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
@@ -421,9 +457,9 @@ Respond with ONLY a raw JSON object, no markdown:
     };
     saveActivePlan(updated);
     setWeeklyPlan(updated);
+    setLoggedDays(prev => { const n = new Set(prev); n.delete(day); return n; });
   }
 
-  // ── SAVE NAMED PLAN ──
   function saveNamedPlan() {
     if (!weeklyPlan || !planName.trim()) return;
     const newPlan: SavedPlan = {
@@ -445,6 +481,7 @@ Respond with ONLY a raw JSON object, no markdown:
     setWeeklyPlan(normalized);
     setMode('weekly-result');
     setShowSavedPlans(false);
+    setLoggedDays(new Set());
     setExpandedDay(normalized.days.find(d => d.exercises.length > 0)?.day ?? null);
   }
 
@@ -463,58 +500,6 @@ Respond with ONLY a raw JSON object, no markdown:
   }
 
   const profile = loadProfile();
-
-  // ── DURATION / INTENSITY UI ──
-  const DurationIntensityControls = () => (
-    <div className="mb-6 space-y-4">
-      <div>
-        <p className="text-xs font-bold text-gray-600 uppercase tracking-widest mb-2 flex items-center gap-2">
-          <Clock size={12} /> Duration
-        </p>
-        <div className="flex gap-2 flex-wrap">
-          {DURATION_PRESETS.map(d => (
-            <button key={d} onClick={() => setDurationPreset(d)}
-              className={`px-4 py-2 rounded-full text-xs font-bold border transition-all ${
-                durationPreset === d
-                  ? 'bg-zinc-800 border-gray-500 text-white'
-                  : 'bg-[#111] border-[#222] text-gray-500 hover:border-gray-600'
-              }`}
-            >{d}</button>
-          ))}
-        </div>
-        {durationPreset === 'Custom' && (
-          <div className="mt-3 flex items-center gap-3">
-            <input
-              type="number"
-              value={customDuration}
-              onChange={e => setCustomDuration(e.target.value)}
-              placeholder="e.g. 75"
-              min={10}
-              max={240}
-              className="w-28 bg-[#1a1a1a] border border-[#333] rounded-xl px-3 py-2 text-white text-sm outline-none focus:border-blue-500 transition"
-            />
-            <span className="text-gray-500 text-sm">minutes</span>
-          </div>
-        )}
-      </div>
-      <div>
-        <p className="text-xs font-bold text-gray-600 uppercase tracking-widest mb-2 flex items-center gap-2">
-          <Zap size={12} /> Intensity
-        </p>
-        <div className="flex gap-2">
-          {INTENSITIES.map(i => (
-            <button key={i.value} onClick={() => setIntensity(i.value)}
-              className={`flex-1 py-2 rounded-xl text-xs font-bold border transition-all ${
-                intensity === i.value
-                  ? 'bg-zinc-800 border-gray-500 text-white'
-                  : 'bg-[#111] border-[#222] text-gray-500 hover:border-gray-600'
-              }`}
-            >{i.label}</button>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
 
   return (
     <div className="pt-10 pb-24 px-6 max-w-lg mx-auto min-h-screen text-white font-sans">
@@ -543,8 +528,57 @@ Respond with ONLY a raw JSON object, no markdown:
         </div>
       )}
 
-      {/* Duration & Intensity shown everywhere except weekly result and loading */}
-      {!loading && mode !== 'weekly-result' && <DurationIntensityControls />}
+      {/* Duration & Intensity */}
+      {!loading && mode !== 'weekly-result' && (
+        <div className="mb-6 space-y-4">
+          <div>
+            <p className="text-xs font-bold text-gray-600 uppercase tracking-widest mb-2 flex items-center gap-2">
+              <Clock size={12} /> Duration
+            </p>
+            <div className="flex gap-2 flex-wrap">
+              {DURATION_PRESETS.map(d => (
+                <button key={d} onClick={() => setDurationPreset(d)}
+                  className={`px-4 py-2 rounded-full text-xs font-bold border transition-all ${
+                    durationPreset === d
+                      ? 'bg-zinc-800 border-gray-500 text-white'
+                      : 'bg-[#111] border-[#222] text-gray-500 hover:border-gray-600'
+                  }`}
+                >{d}</button>
+              ))}
+            </div>
+            {durationPreset === 'Custom' && (
+              <div className="mt-3 flex items-center gap-3">
+                <input
+                  type="number"
+                  value={customDuration}
+                  onChange={e => setCustomDuration(e.target.value)}
+                  placeholder="e.g. 75"
+                  min={10}
+                  max={240}
+                  className="w-28 bg-[#1a1a1a] border border-[#333] rounded-xl px-3 py-2 text-white text-sm outline-none focus:border-blue-500 transition"
+                />
+                <span className="text-gray-500 text-sm">minutes</span>
+              </div>
+            )}
+          </div>
+          <div>
+            <p className="text-xs font-bold text-gray-600 uppercase tracking-widest mb-2 flex items-center gap-2">
+              <Zap size={12} /> Intensity
+            </p>
+            <div className="flex gap-2">
+              {INTENSITIES.map(i => (
+                <button key={i.value} onClick={() => setIntensity(i.value)}
+                  className={`flex-1 py-2 rounded-xl text-xs font-bold border transition-all ${
+                    intensity === i.value
+                      ? 'bg-zinc-800 border-gray-500 text-white'
+                      : 'bg-[#111] border-[#222] text-gray-500 hover:border-gray-600'
+                  }`}
+                >{i.label}</button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Loading */}
       {loading && (
@@ -554,7 +588,7 @@ Respond with ONLY a raw JSON object, no markdown:
         </div>
       )}
 
-      {/* ── MENU ── */}
+      {/* Menu */}
       {mode === 'menu' && !loading && (
         <div className="space-y-4">
           <button onClick={() => { setMode('quick'); generateQuickSuggestion(); }}
@@ -607,7 +641,7 @@ Respond with ONLY a raw JSON object, no markdown:
         </div>
       )}
 
-      {/* ── QUICK RESULT ── */}
+      {/* Quick result */}
       {mode === 'quick' && quickSuggestion && !loading && (
         <div className="space-y-5 animate-in fade-in duration-300">
           <div className="bg-[#111] rounded-2xl p-6 border border-[#222]">
@@ -623,28 +657,21 @@ Respond with ONLY a raw JSON object, no markdown:
 
           <div className="space-y-3">
             {quickSuggestion.exercises.map((ex, i) => (
-              <div key={i} className="bg-[#111] p-5 rounded-2xl border border-[#222] flex justify-between items-center group">
+              <div key={i} className="bg-[#111] p-5 rounded-2xl border border-[#222] flex justify-between items-center">
                 <button onClick={() => setSelectedExercise(ex.name)} className="text-left flex-1">
                   <span className="text-base font-bold text-white hover:text-blue-400 transition block">{ex.name}</span>
                   <span className="text-xs text-gray-500 mt-1 uppercase tracking-tighter font-bold">{ex.sets} sets × {ex.reps} reps</span>
                 </button>
                 <div className="flex items-center gap-2 ml-2 flex-shrink-0">
                   <span className="text-blue-500 font-bold">{ex.weight ? `${ex.weight}kg` : 'Bwt'}</span>
-                  <button
-                    onClick={() => removeExerciseFromQuick(i)}
+                  <button onClick={() => removeExerciseFromQuick(i)}
                     className="p-1.5 rounded-lg bg-[#222] hover:bg-red-900/40 text-gray-400 hover:text-red-400 transition"
-                    title="Remove"
-                  >
-                    <Trash2 size={13} />
-                  </button>
+                  ><Trash2 size={13} /></button>
                 </div>
               </div>
             ))}
 
-            {/* Add exercise to quick suggestion */}
-            <button
-              onClick={addExerciseToQuick}
-              disabled={addingToQuick}
+            <button onClick={addExerciseToQuick} disabled={addingToQuick}
               className="w-full py-3 border border-dashed border-[#333] rounded-2xl text-gray-500 hover:text-white hover:border-gray-500 text-sm font-bold flex items-center justify-center gap-2 transition disabled:opacity-50"
             >
               {addingToQuick
@@ -654,13 +681,26 @@ Respond with ONLY a raw JSON object, no markdown:
             </button>
           </div>
 
-          <button onClick={reset} className="w-full py-4 text-gray-600 hover:text-white transition font-bold text-sm">
+          {/* Log button */}
+          {quickLogged ? (
+            <div className="w-full py-4 bg-green-900/20 border border-green-900/30 rounded-2xl flex items-center justify-center gap-2 text-green-400 font-bold text-sm">
+              <CheckCircle2 size={18} /> Logged to History!
+            </div>
+          ) : (
+            <button onClick={logQuickWorkout}
+              className="w-full py-4 bg-[#3B82F6] hover:bg-blue-500 text-white rounded-2xl font-bold text-base transition flex items-center justify-center gap-2 shadow-xl shadow-blue-900/10"
+            >
+              <ClipboardCheck size={18} /> Log This Workout
+            </button>
+          )}
+
+          <button onClick={reset} className="w-full py-3 text-gray-600 hover:text-white transition font-bold text-sm">
             ← Back to Coach
           </button>
         </div>
       )}
 
-      {/* ── WEEKLY CONFIG ── */}
+      {/* Weekly config */}
       {mode === 'weekly-config' && !loading && (
         <div className="space-y-8 animate-in fade-in duration-300">
           <div>
@@ -691,7 +731,7 @@ Respond with ONLY a raw JSON object, no markdown:
         </div>
       )}
 
-      {/* ── WEEKLY RESULT ── */}
+      {/* Weekly result */}
       {mode === 'weekly-result' && weeklyPlan && !loading && (
         <div className="space-y-6 animate-in fade-in duration-300">
           <div className="flex justify-between items-center">
@@ -712,6 +752,7 @@ Respond with ONLY a raw JSON object, no markdown:
               const muscleGroups = Array.isArray(day.muscleGroups) ? day.muscleGroups : [];
               const isRest = exercises.length === 0;
               const isExpanded = expandedDay === day.day;
+              const isLogged = loggedDays.has(day.day);
               return (
                 <div key={day.day} className={`rounded-2xl border transition-all ${isRest ? 'bg-black border-[#111] opacity-40' : 'bg-[#111] border-[#222]'}`}>
                   <button disabled={isRest} onClick={() => setExpandedDay(isExpanded ? null : day.day)}
@@ -719,11 +760,16 @@ Respond with ONLY a raw JSON object, no markdown:
                   >
                     <div>
                       <span className="text-[10px] font-black text-gray-600 uppercase tracking-widest block mb-1">{day.day}</span>
-                      <div className="flex gap-2 flex-wrap">
+                      <div className="flex gap-2 flex-wrap items-center">
                         {isRest
                           ? <span className="text-sm text-gray-800 font-bold">Rest Day</span>
                           : muscleGroups.map(m => <span key={m} className="text-xs font-bold text-blue-500 uppercase tracking-tighter">{m}</span>)
                         }
+                        {isLogged && (
+                          <span className="text-[10px] font-bold text-green-400 flex items-center gap-1">
+                            <CheckCircle2 size={11} /> Logged
+                          </span>
+                        )}
                       </div>
                     </div>
                     {!isRest && (isExpanded ? <ChevronUp size={18} className="text-gray-600" /> : <ChevronDown size={18} className="text-gray-600" />)}
@@ -774,9 +820,22 @@ Respond with ONLY a raw JSON object, no markdown:
                           )}
                         </div>
                       ))}
+
                       <button onClick={() => addExerciseToDay(day.day, muscleGroups)}
                         className="w-full mt-1 py-2.5 border border-dashed border-[#333] rounded-xl text-gray-600 hover:text-white hover:border-gray-500 text-xs font-bold flex items-center justify-center gap-2 transition"
                       ><Plus size={14} /> Add Exercise</button>
+
+                      {isLogged ? (
+                        <div className="w-full py-3 bg-green-900/20 border border-green-900/30 rounded-xl flex items-center justify-center gap-2 text-green-400 font-bold text-xs mt-1">
+                          <CheckCircle2 size={14} /> Logged to History!
+                        </div>
+                      ) : (
+                        <button onClick={() => logDayWorkout(day)}
+                          className="w-full py-3 bg-[#3B82F6] hover:bg-blue-500 text-white rounded-xl font-bold text-sm transition flex items-center justify-center gap-2 mt-1"
+                        >
+                          <ClipboardCheck size={15} /> Log {day.day}'s Workout
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -790,7 +849,7 @@ Respond with ONLY a raw JSON object, no markdown:
         </div>
       )}
 
-      {/* Save plan modal */}
+      {/* Save modal */}
       {showSaveModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-end justify-center" onClick={() => setShowSaveModal(false)}>
           <div className="bg-[#111] rounded-t-3xl w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
