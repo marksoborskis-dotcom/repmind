@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Dumbbell, AlertTriangle, Lightbulb, ChevronRight, ExternalLink } from 'lucide-react';
+import { X, Dumbbell, AlertTriangle, Lightbulb, ChevronRight, ChevronLeft, ExternalLink, Play } from 'lucide-react';
 
 interface ExerciseInfo {
   primaryMuscles: string[];
@@ -12,12 +12,31 @@ interface ExerciseInfo {
   tips: string[];
 }
 
+interface FreeDBExercise {
+  id: string;
+  name: string;
+  images: string[];
+  primaryMuscles: string[];
+  secondaryMuscles: string[];
+  equipment: string;
+  level: string;
+  instructions: string[];
+  category: string;
+}
+
 interface Props {
   exerciseName: string;
   onClose: () => void;
 }
 
-const cache = new Map<string, { info: ExerciseInfo; imageUrl: string | null }>();
+const infoCache = new Map<string, { info: ExerciseInfo; images: string[] }>();
+
+// Cache the entire exercise database so we only fetch it once
+let exerciseDB: FreeDBExercise[] | null = null;
+let dbLoading = false;
+let dbWaiters: ((db: FreeDBExercise[]) => void)[] = [];
+
+const IMG_BASE = 'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises';
 
 const DIFFICULTY_COLOR: Record<string, string> = {
   beginner: 'text-green-400 bg-green-500/10 border border-green-500/20',
@@ -62,10 +81,82 @@ async function askClaude(prompt: string): Promise<string> {
   return data.content?.[0]?.text ?? '';
 }
 
+// Load the exercise database (cached after first load)
+async function loadExerciseDB(): Promise<FreeDBExercise[]> {
+  if (exerciseDB) return exerciseDB;
+
+  if (dbLoading) {
+    return new Promise(resolve => { dbWaiters.push(resolve); });
+  }
+
+  dbLoading = true;
+  try {
+    const res = await fetch(
+      'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/dist/exercises.json'
+    );
+    if (!res.ok) throw new Error('Failed to fetch exercise DB');
+    exerciseDB = await res.json();
+    dbWaiters.forEach(w => w(exerciseDB!));
+    dbWaiters = [];
+    return exerciseDB!;
+  } catch {
+    dbLoading = false;
+    return [];
+  }
+}
+
+// Fuzzy match an exercise name against the database
+function findExercise(db: FreeDBExercise[], searchName: string): FreeDBExercise | null {
+  const search = searchName.toLowerCase().trim();
+
+  // 1. Exact match
+  const exact = db.find(e => e.name.toLowerCase() === search);
+  if (exact) return exact;
+
+  // 2. One name contains the other
+  const contains = db.find(e => {
+    const eName = e.name.toLowerCase();
+    return eName.includes(search) || search.includes(eName);
+  });
+  if (contains) return contains;
+
+  // 3. Word overlap scoring — find the best match
+  const searchWords = search.replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(w => w.length > 2);
+  if (searchWords.length === 0) return null;
+
+  let bestMatch: FreeDBExercise | null = null;
+  let bestScore = 0;
+
+  for (const exercise of db) {
+    const exWords = exercise.name.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(w => w.length > 2);
+    const matchingWords = searchWords.filter(sw =>
+      exWords.some(ew => ew.includes(sw) || sw.includes(ew))
+    );
+
+    // Score = matching words / total unique words between both names
+    const score = matchingWords.length / Math.max(searchWords.length, exWords.length);
+
+    if (score > bestScore && score >= 0.4) {
+      bestScore = score;
+      bestMatch = exercise;
+    }
+  }
+
+  return bestMatch;
+}
+
+// Build image URLs from a matched exercise
+function getImageUrls(exercise: FreeDBExercise): string[] {
+  if (!exercise.images || exercise.images.length === 0) return [];
+  return exercise.images.map(imgPath => `${IMG_BASE}/${imgPath}`);
+}
+
 export default function ExerciseModal({ exerciseName, onClose }: Props) {
   const [info, setInfo] = useState<ExerciseInfo | null>(null);
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [images, setImages] = useState<string[]>([]);
+  const [currentImage, setCurrentImage] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [brokenImages, setBrokenImages] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     document.body.style.overflow = 'hidden';
@@ -73,31 +164,57 @@ export default function ExerciseModal({ exerciseName, onClose }: Props) {
   }, []);
 
   useEffect(() => {
-    if (cache.has(exerciseName)) {
-      const cached = cache.get(exerciseName)!;
+    if (infoCache.has(exerciseName)) {
+      const cached = infoCache.get(exerciseName)!;
       setInfo(cached.info);
-      setImageUrl(cached.imageUrl);
+      setImages(cached.images);
       setLoading(false);
       return;
     }
 
     const fetchAll = async () => {
       setLoading(true);
-      let fetchedImage: string | null = null;
+      setBrokenImages(new Set());
+      setCurrentImage(0);
+
+      // 1. Load exercise database and find matching exercise
+      const db = await loadExerciseDB();
+      const match = findExercise(db, exerciseName);
+      const fetchedImages = match ? getImageUrls(match) : [];
+
+      // 2. If we have a match from the DB, use its data + ask Claude only for tips/mistakes
       let fetchedInfo: ExerciseInfo | null = null;
 
-      try {
-        const res = await fetch(
-          `https://wger.de/api/v2/exercise/search/?term=${encodeURIComponent(exerciseName)}&language=english&format=json`
-        );
-        const data = await res.json();
-        const hit = data.suggestions?.[0]?.data;
-        if (hit?.image) fetchedImage = hit.image;
-      } catch (err) { console.error('Image fetch failed', err); }
+      if (match) {
+        fetchedInfo = {
+          primaryMuscles: match.primaryMuscles || [],
+          secondaryMuscles: match.secondaryMuscles || [],
+          equipment: match.equipment || 'bodyweight',
+          difficulty: (match.level as ExerciseInfo['difficulty']) || 'intermediate',
+          steps: match.instructions || [],
+          commonMistakes: [],
+          tips: [],
+        };
 
-      try {
-        const raw = await askClaude(
-          `Give detailed info for the exercise: "${exerciseName}".
+        // Ask Claude only for mistakes and tips (saves API credits)
+        try {
+          const raw = await askClaude(
+            `For the exercise "${exerciseName}", give common mistakes and pro tips.
+Respond with ONLY a raw JSON object, no markdown:
+{
+  "commonMistakes": ["Flaring elbows too wide", "Arching back excessively"],
+  "tips": ["Keep shoulder blades retracted", "Control the negative"]
+}`
+          );
+          const extra = extractJSON(raw) as { commonMistakes?: string[]; tips?: string[] };
+          if (extra.commonMistakes) fetchedInfo.commonMistakes = extra.commonMistakes;
+          if (extra.tips) fetchedInfo.tips = extra.tips;
+        } catch { /* we still have enough data */ }
+      } else {
+        // No DB match — ask Claude for everything
+        try {
+          const raw = await askClaude(
+            `Give detailed info for the exercise: "${exerciseName}".
 You MUST respond with ONLY a raw JSON object. No markdown, no explanation, no code fences.
 Use exactly this shape:
 {
@@ -109,22 +226,25 @@ Use exactly this shape:
   "commonMistakes": ["Flaring elbows too wide"],
   "tips": ["Keep shoulder blades retracted"]
 }`
-        );
-        fetchedInfo = extractJSON(raw) as ExerciseInfo;
-      } catch (err) { console.error('Claude fetch failed', err); }
+          );
+          fetchedInfo = extractJSON(raw) as ExerciseInfo;
+        } catch (err) { console.error('Claude fetch failed', err); }
+      }
 
       if (fetchedInfo) {
-        cache.set(exerciseName, { info: fetchedInfo, imageUrl: fetchedImage });
+        infoCache.set(exerciseName, { info: fetchedInfo, images: fetchedImages });
         setInfo(fetchedInfo);
       }
-      setImageUrl(fetchedImage);
+      setImages(fetchedImages);
       setLoading(false);
     };
 
     fetchAll();
   }, [exerciseName]);
 
-  const musclewikiUrl = `https://musclewiki.com/exercises/?muscles=${info?.primaryMuscles?.[0]?.toLowerCase().replace(' ', '-') ?? ''}`;
+  const youtubeSearchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(exerciseName + ' exercise form tutorial')}`;
+  const musclewikiUrl = 'https://musclewiki.com/directory';
+  const validImages = images.filter(src => !brokenImages.has(src));
 
   return (
     <AnimatePresence>
@@ -167,9 +287,53 @@ Use exactly this shape:
               </div>
             ) : (
               <>
-                {imageUrl ? (
-                  <div className="rounded-xl overflow-hidden glass">
-                    <img src={imageUrl} alt={exerciseName} className="w-full object-contain max-h-56" onError={() => setImageUrl(null)} />
+                {/* Exercise Images */}
+                {validImages.length > 0 ? (
+                  <div className="rounded-xl overflow-hidden glass relative group">
+                    <img
+                      src={validImages[currentImage % validImages.length]}
+                      alt={`${exerciseName} - position ${(currentImage % validImages.length) + 1}`}
+                      className="w-full object-contain max-h-64 bg-white/[0.02] p-2"
+                      onError={(e) => {
+                        setBrokenImages(prev => new Set([...prev, (e.target as HTMLImageElement).src]));
+                      }}
+                    />
+                    {/* Arrow buttons */}
+                    {validImages.length > 1 && (
+                      <>
+                        <button
+                          onClick={() => setCurrentImage(prev => (prev - 1 + validImages.length) % validImages.length)}
+                          className="absolute left-2 top-1/2 -translate-y-1/2 bg-black/50 backdrop-blur-sm hover:bg-black/70 text-white p-1.5 rounded-full transition-all opacity-0 group-hover:opacity-100"
+                        >
+                          <ChevronLeft size={20} />
+                        </button>
+                        <button
+                          onClick={() => setCurrentImage(prev => (prev + 1) % validImages.length)}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 bg-black/50 backdrop-blur-sm hover:bg-black/70 text-white p-1.5 rounded-full transition-all opacity-0 group-hover:opacity-100"
+                        >
+                          <ChevronRight size={20} />
+                        </button>
+                      </>
+                    )}
+                    {/* Dots + counter */}
+                    {validImages.length > 1 && (
+                      <div className="flex items-center justify-center gap-3 py-2.5 bg-white/[0.02]">
+                        {validImages.map((_, i) => (
+                          <button
+                            key={i}
+                            onClick={() => setCurrentImage(i)}
+                            className={`w-2 h-2 rounded-full transition-all ${
+                              i === (currentImage % validImages.length)
+                                ? 'bg-cyan-400 scale-125'
+                                : 'bg-white/20 hover:bg-white/40'
+                            }`}
+                          />
+                        ))}
+                        <span className="text-[10px] text-gray-500 ml-1">
+                          {(currentImage % validImages.length) + 1}/{validImages.length}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="rounded-xl glass h-36 flex flex-col items-center justify-center gap-2">
@@ -180,6 +344,7 @@ Use exactly this shape:
 
                 {info && (
                   <>
+                    {/* Tags */}
                     <div className="flex flex-wrap gap-2">
                       <span className={`text-xs px-3 py-1 rounded-full font-semibold capitalize ${DIFFICULTY_COLOR[info.difficulty] ?? 'text-gray-400 bg-white/5'}`}>
                         {info.difficulty}
@@ -194,56 +359,75 @@ Use exactly this shape:
                       ))}
                     </div>
 
-                    <div>
-                      <h3 className="font-bold text-white mb-3 flex items-center gap-2 text-sm uppercase tracking-wider text-gray-400">
-                        <ChevronRight size={18} className="text-cyan-400" /> How to Perform
-                      </h3>
-                      <ul className="space-y-3">
-                        {info.steps.map((step, i) => (
-                          <li key={i} className="flex gap-3 text-gray-300 text-sm">
-                            <span className="bg-gradient-to-br from-cyan-500 to-purple-500 text-white text-[10px] w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 font-bold">
-                              {i + 1}
-                            </span>
-                            <p>{step.replace(/^(Step\s*)?\d+[:.]\s*/i, '')}</p>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
+                    {/* Steps */}
+                    {info.steps.length > 0 && (
+                      <div>
+                        <h3 className="font-bold mb-3 flex items-center gap-2 text-sm uppercase tracking-wider text-gray-400">
+                          <ChevronRight size={18} className="text-cyan-400" /> How to Perform
+                        </h3>
+                        <ul className="space-y-3">
+                          {info.steps.map((step, i) => (
+                            <li key={i} className="flex gap-3 text-gray-300 text-sm">
+                              <span className="bg-gradient-to-br from-cyan-500 to-purple-500 text-white text-[10px] w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 font-bold">
+                                {i + 1}
+                              </span>
+                              <p>{step.replace(/^(Step\s*)?\d+[:.]\s*/i, '')}</p>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
 
-                    <div className="glass bg-red-500/[0.04] border-red-500/15 rounded-xl p-4">
-                      <h3 className="font-bold text-white mb-2 flex items-center gap-2 text-sm">
-                        <AlertTriangle size={16} className="text-red-400" /> Common Mistakes
-                      </h3>
-                      <ul className="space-y-2">
-                        {info.commonMistakes.map((m, i) => (
-                          <li key={i} className="flex gap-2 text-gray-300 text-sm">
-                            <span className="text-red-400 flex-shrink-0">•</span> {m}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
+                    {/* Common Mistakes */}
+                    {info.commonMistakes.length > 0 && (
+                      <div className="glass bg-red-500/[0.04] border-red-500/15 rounded-xl p-4">
+                        <h3 className="font-bold text-white mb-2 flex items-center gap-2 text-sm">
+                          <AlertTriangle size={16} className="text-red-400" /> Common Mistakes
+                        </h3>
+                        <ul className="space-y-2">
+                          {info.commonMistakes.map((m, i) => (
+                            <li key={i} className="flex gap-2 text-gray-300 text-sm">
+                              <span className="text-red-400 flex-shrink-0">•</span> {m}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
 
-                    <div className="glass bg-green-500/[0.04] border-green-500/15 rounded-xl p-4">
-                      <h3 className="font-bold text-white mb-2 flex items-center gap-2 text-sm">
-                        <Lightbulb size={16} className="text-green-400" /> Pro Tips
-                      </h3>
-                      <ul className="space-y-2">
-                        {info.tips.map((t, i) => (
-                          <li key={i} className="flex gap-2 text-gray-300 text-sm italic">
-                            <span className="text-green-400 flex-shrink-0">•</span> {t}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
+                    {/* Pro Tips */}
+                    {info.tips.length > 0 && (
+                      <div className="glass bg-green-500/[0.04] border-green-500/15 rounded-xl p-4">
+                        <h3 className="font-bold text-white mb-2 flex items-center gap-2 text-sm">
+                          <Lightbulb size={16} className="text-green-400" /> Pro Tips
+                        </h3>
+                        <ul className="space-y-2">
+                          {info.tips.map((t, i) => (
+                            <li key={i} className="flex gap-2 text-gray-300 text-sm italic">
+                              <span className="text-green-400 flex-shrink-0">•</span> {t}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
 
-                    <a
-                      href={musclewikiUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center justify-center gap-2 w-full py-3 glass text-gray-400 rounded-xl hover:text-white hover:border-cyan-500/30 transition-all text-sm font-medium"
-                    >
-                      <ExternalLink size={14} /> View more on MuscleWiki
-                    </a>
+                    {/* Links */}
+                    <div className="space-y-2">
+                      <a href={youtubeSearchUrl} target="_blank" rel="noopener noreferrer"
+                        className="flex items-center gap-3 w-full p-3.5 glass rounded-xl hover:border-red-500/30 transition-all group">
+                        <div className="bg-red-500/15 border border-red-500/20 p-2 rounded-lg group-hover:bg-red-500/25 transition">
+                          <Play size={16} className="text-red-400 ml-0.5" fill="currentColor" />
+                        </div>
+                        <div>
+                          <p className="text-white text-sm font-bold">Watch Video Tutorial</p>
+                          <p className="text-gray-500 text-xs">Form guide on YouTube</p>
+                        </div>
+                        <ExternalLink size={14} className="text-gray-600 ml-auto" />
+                      </a>
+                      <a href={musclewikiUrl} target="_blank" rel="noopener noreferrer"
+                        className="flex items-center justify-center gap-2 w-full py-3 glass text-gray-400 rounded-xl hover:text-white hover:border-cyan-500/30 transition-all text-sm font-medium">
+                        <ExternalLink size={14} /> Browse exercises on MuscleWiki
+                      </a>
+                    </div>
                   </>
                 )}
               </>
