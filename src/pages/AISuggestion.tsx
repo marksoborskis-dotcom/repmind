@@ -111,23 +111,23 @@ export default function AISuggestion() {
   const [planName, setPlanName] = useState('');
   const [showSavedPlans, setShowSavedPlans] = useState(false);
   const [addingToQuick, setAddingToQuick] = useState(false);
-  const [editingWeight, setEditingWeight] = useState<string | null>(null); // "quick-0", "Monday-2", etc.
+  const [editingField, setEditingField] = useState<string | null>(null); // e.g. "quick-0-weight", "Monday-2-sets"
 
-  function updateQuickWeight(index: number, newWeight: number | null) {
+  function updateQuickExercise(index: number, field: 'sets' | 'reps' | 'weight', value: number | null) {
     setQuickSuggestion(prev => prev ? {
       ...prev,
-      exercises: prev.exercises.map((ex, i) => i === index ? { ...ex, weight: newWeight } : ex)
+      exercises: prev.exercises.map((ex, i) => i === index ? { ...ex, [field]: value } : ex)
     } : prev);
     setQuickLogged(false);
   }
 
-  function updateWeeklyWeight(day: string, exIndex: number, newWeight: number | null) {
+  function updateWeeklyExercise(day: string, exIndex: number, field: 'sets' | 'reps' | 'weight', value: number | null) {
     if (!weeklyPlan) return;
     const updated = {
       ...weeklyPlan,
       days: weeklyPlan.days.map(d => {
         if (d.day !== day) return d;
-        return { ...d, exercises: d.exercises.map((ex, i) => i === exIndex ? { ...ex, weight: newWeight } : ex) };
+        return { ...d, exercises: d.exercises.map((ex, i) => i === exIndex ? { ...ex, [field]: value } : ex) };
       }),
     };
     saveActivePlan(updated);
@@ -238,78 +238,22 @@ export default function AISuggestion() {
   function deleteNamedPlan(id: string) { const updated = savedPlans.filter(p => p.id !== id); setSavedPlans(updated); persistSavedPlans(updated); }
   function reset() { setMode('menu'); setQuickSuggestion(null); setError(null); setSwapping(null); setSwapOptions([]); }
 
-  const profile = loadProfile();
-
   return (
     <div className="pt-4 pb-24 max-w-lg mx-auto min-h-screen text-white font-sans relative z-10">
-      <div className="mb-5">
+      <div className="mb-6">
         <h1 className="text-4xl font-extrabold mb-1">
           AI <span className="text-gradient">Coach</span>
         </h1>
-        <p className="text-gray-500 text-sm">Personalized training for your goals.</p>
+        {mode === 'menu' && <p className="text-gray-500 text-sm">Personalized training for your goals.</p>}
+        {mode === 'quick' && <p className="text-gray-500 text-sm">Tap any value to customize it.</p>}
+        {mode === 'weekly-config' && <p className="text-gray-500 text-sm">Design your weekly schedule.</p>}
+        {mode === 'weekly-result' && <p className="text-gray-500 text-sm">Your personalized plan.</p>}
       </div>
-
-      {/* Profile pills */}
-      {profile && (
-        <div className="mb-5 flex flex-wrap gap-2">
-          <span className="glass text-gray-400 text-xs px-3 py-1.5 rounded-full">{profile.weight}kg · {profile.height}cm</span>
-          <span className="glass text-gray-400 text-xs px-3 py-1.5 rounded-full capitalize">{profile.level}</span>
-          <span className="bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-xs px-3 py-1.5 rounded-full">
-            {profile.goal === 'lose_fat' ? 'Lose Fat' : profile.goal === 'build_muscle' ? 'Build Muscle' : 'Maintain'}
-          </span>
-        </div>
-      )}
 
       {error && (
         <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
           className="mb-5 p-4 glass bg-red-500/[0.06] border-red-500/15 rounded-2xl text-red-400 text-sm flex items-center gap-3">
           <AlertTriangle size={18} /> {error}
-        </motion.div>
-      )}
-
-      {/* Duration & Intensity */}
-      {!loading && mode !== 'weekly-result' && (
-        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="mb-6 space-y-4">
-          <div>
-            <p className="text-[10px] font-bold text-gray-600 uppercase tracking-[0.15em] mb-2 flex items-center gap-2">
-              <Clock size={12} className="text-cyan-400" /> Duration
-            </p>
-            <div className="flex gap-2 flex-wrap">
-              {DURATION_PRESETS.map(d => (
-                <button key={d} onClick={() => setDurationPreset(d)}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-                    durationPreset === d
-                      ? 'bg-cyan-500/15 border border-cyan-500/25 text-cyan-400 glow-cyan'
-                      : 'glass text-gray-500 hover:border-white/15'
-                  }`}
-                >{d}</button>
-              ))}
-            </div>
-            {durationPreset === 'Custom' && (
-              <div className="mt-3 flex items-center gap-3">
-                <input type="number" value={customDuration} onChange={e => setCustomDuration(e.target.value)}
-                  placeholder="e.g. 75" min={10} max={240}
-                  className="w-28 glass rounded-xl px-3 py-2 text-white text-sm outline-none focus:border-cyan-500/40 transition bg-transparent" />
-                <span className="text-gray-500 text-sm">minutes</span>
-              </div>
-            )}
-          </div>
-          <div>
-            <p className="text-[10px] font-bold text-gray-600 uppercase tracking-[0.15em] mb-2 flex items-center gap-2">
-              <Zap size={12} className="text-purple-400" /> Intensity
-            </p>
-            <div className="flex gap-2">
-              {INTENSITIES.map(i => (
-                <button key={i.value} onClick={() => setIntensity(i.value)}
-                  className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-all ${
-                    intensity === i.value
-                      ? 'bg-purple-500/15 border border-purple-500/25 text-purple-400 glow-purple'
-                      : 'glass text-gray-500 hover:border-white/15'
-                  }`}
-                >{i.label}</button>
-              ))}
-            </div>
-          </div>
         </motion.div>
       )}
 
@@ -330,30 +274,67 @@ export default function AISuggestion() {
       {/* Menu */}
       {mode === 'menu' && !loading && (
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-3">
+
+          {/* Quick Suggestion button */}
           <motion.button whileTap={{ scale: 0.98 }} onClick={() => { setMode('quick'); generateQuickSuggestion(); }}
-            className="w-full glass glass-hover rounded-2xl p-5 text-left flex items-center justify-between group">
-            <div>
-              <div className="flex items-center gap-2 mb-1">
-                <BrainCircuit size={20} className="text-cyan-400" />
+            className="w-full glass glass-hover rounded-2xl p-5 text-left flex items-center justify-between group relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-24 h-24 bg-cyan-500/5 rounded-full blur-2xl" />
+            <div className="relative z-10">
+              <div className="flex items-center gap-2.5 mb-1">
+                <div className="bg-cyan-500/10 border border-cyan-500/20 p-1.5 rounded-lg">
+                  <BrainCircuit size={18} className="text-cyan-400" />
+                </div>
                 <h2 className="font-bold text-lg">Quick Suggestion</h2>
               </div>
-              <p className="text-gray-500 text-sm">{effectiveDuration} · {intensity} intensity</p>
+              <p className="text-gray-500 text-xs ml-9">One session based on your history</p>
             </div>
-            <ChevronRight size={20} className="text-gray-600 group-hover:text-cyan-400 transition" />
+            <ChevronRight size={20} className="text-gray-600 group-hover:text-cyan-400 transition relative z-10" />
           </motion.button>
 
+          {/* Weekly Planner button */}
           <motion.button whileTap={{ scale: 0.98 }} onClick={() => setMode('weekly-config')}
-            className="w-full glass glass-hover rounded-2xl p-5 text-left flex items-center justify-between group">
-            <div>
-              <div className="flex items-center gap-2 mb-1">
-                <CalendarDays size={20} className="text-purple-400" />
+            className="w-full glass glass-hover rounded-2xl p-5 text-left flex items-center justify-between group relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-24 h-24 bg-purple-500/5 rounded-full blur-2xl" />
+            <div className="relative z-10">
+              <div className="flex items-center gap-2.5 mb-1">
+                <div className="bg-purple-500/10 border border-purple-500/20 p-1.5 rounded-lg">
+                  <CalendarDays size={18} className="text-purple-400" />
+                </div>
                 <h2 className="font-bold text-lg">Weekly Planner</h2>
               </div>
-              <p className="text-gray-500 text-sm">{effectiveDuration} · {intensity} intensity</p>
+              <p className="text-gray-500 text-xs ml-9">Design your full 7-day routine</p>
             </div>
-            <ChevronRight size={20} className="text-gray-600 group-hover:text-purple-400 transition" />
+            <ChevronRight size={20} className="text-gray-600 group-hover:text-purple-400 transition relative z-10" />
           </motion.button>
 
+          {/* Compact duration & intensity row */}
+          <div className="glass rounded-xl p-3 flex items-center gap-3">
+            <div className="flex items-center gap-2 flex-1">
+              <Clock size={14} className="text-gray-600 flex-shrink-0" />
+              <div className="flex gap-1.5">
+                {['30 min', '45 min', '60 min', '90 min'].map(d => (
+                  <button key={d} onClick={() => setDurationPreset(d)}
+                    className={`px-2 py-1 rounded-lg text-[10px] font-bold transition-all ${
+                      durationPreset === d ? 'bg-cyan-500/15 text-cyan-400' : 'text-gray-600 hover:text-gray-400'
+                    }`}
+                  >{d.replace(' min', '')}</button>
+                ))}
+              </div>
+            </div>
+            <div className="w-px h-5 bg-white/5" />
+            <div className="flex items-center gap-1.5">
+              <Zap size={14} className="text-gray-600 flex-shrink-0" />
+              {INTENSITIES.map(i => (
+                <button key={i.value} onClick={() => setIntensity(i.value)}
+                  className={`px-2 py-1 rounded-lg text-[10px] font-bold transition-all ${
+                    intensity === i.value ? 'bg-purple-500/15 text-purple-400' : 'text-gray-600 hover:text-gray-400'
+                  }`}
+                >{i.label}</button>
+              ))}
+            </div>
+          </div>
+
+          {/* Saved plans */}
           {savedPlans.length > 0 && (
             <motion.button whileTap={{ scale: 0.98 }} onClick={() => setShowSavedPlans(true)}
               className="w-full flex items-center justify-between glass bg-cyan-500/[0.04] border-cyan-500/15 p-4 rounded-2xl">
@@ -364,6 +345,7 @@ export default function AISuggestion() {
             </motion.button>
           )}
 
+          {/* Active plan */}
           {weeklyPlan && (
             <motion.button whileTap={{ scale: 0.98 }} onClick={() => setMode('weekly-result')}
               className="w-full flex items-center justify-between glass glass-hover p-4 rounded-2xl">
@@ -378,62 +360,102 @@ export default function AISuggestion() {
 
       {/* Quick result */}
       {mode === 'quick' && quickSuggestion && !loading && (
-        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
-          <div className="glass rounded-2xl p-5 relative overflow-hidden">
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
+
+          {/* Header card — compact summary */}
+          <div className="glass rounded-2xl p-4 relative overflow-hidden">
             <div className="absolute top-0 right-0 w-32 h-32 bg-cyan-500/5 rounded-full blur-3xl" />
-            <span className="text-cyan-400 text-[10px] font-bold uppercase tracking-[0.15em]">Target: {quickSuggestion.muscleGroup}</span>
-            <p className="text-gray-400 text-sm mt-3 leading-snug">"{quickSuggestion.reason}"</p>
-            <div className="flex gap-2 mt-3">
-              <span className="bg-white/5 border border-white/8 text-gray-400 text-xs px-2 py-1 rounded-full">{effectiveDuration}</span>
-              <span className="bg-white/5 border border-white/8 text-gray-400 text-xs px-2 py-1 rounded-full capitalize">{intensity}</span>
+            <div className="flex items-center justify-between mb-2 relative z-10">
+              <span className="text-cyan-400 text-xs font-bold uppercase tracking-widest">{quickSuggestion.muscleGroup}</span>
+              <div className="flex gap-1.5">
+                <span className="bg-white/5 border border-white/6 text-gray-500 text-[10px] px-2 py-0.5 rounded-full">{effectiveDuration}</span>
+                <span className="bg-white/5 border border-white/6 text-gray-500 text-[10px] px-2 py-0.5 rounded-full capitalize">{intensity}</span>
+              </div>
             </div>
+            <p className="text-gray-400 text-sm leading-relaxed relative z-10">{quickSuggestion.reason}</p>
           </div>
 
-          <div className="space-y-2.5">
-            {quickSuggestion.exercises.map((ex, i) => (
-              <motion.div key={i} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
-                className="glass rounded-2xl p-4 flex justify-between items-center group">
-                <button onClick={() => setSelectedExercise(ex.name)} className="text-left flex-1">
-                  <span className="text-base font-bold text-white group-hover:text-cyan-400 transition block">{ex.name}</span>
-                  <span className="text-xs text-gray-500 mt-1 uppercase tracking-tighter font-bold">{ex.sets} sets × {ex.reps} reps</span>
-                </button>
-                <div className="flex items-center gap-2 ml-2 flex-shrink-0">
-                  {editingWeight === `quick-${i}` ? (
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      autoFocus
-                      defaultValue={ex.weight ?? ''}
-                      placeholder="Bwt"
-                      className="w-16 bg-white/[0.06] border border-cyan-500/30 rounded-lg py-1 px-2 text-center text-cyan-400 text-sm font-bold outline-none"
-                      onBlur={(e) => {
-                        const val = e.target.value.trim();
-                        updateQuickWeight(i, val ? Number(val) : null);
-                        setEditingWeight(null);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-                      }}
-                    />
-                  ) : (
-                    <button onClick={() => setEditingWeight(`quick-${i}`)}
-                      className="text-cyan-400 font-bold hover:bg-white/5 px-2 py-1 rounded-lg transition"
-                      title="Tap to edit weight"
-                    >{ex.weight ? `${ex.weight}kg` : 'Bwt'}</button>
-                  )}
-                  <button onClick={() => removeExerciseFromQuick(i)} className="p-1.5 rounded-lg bg-white/5 hover:bg-red-500/15 text-gray-500 hover:text-red-400 transition">
-                    <Trash2 size={13} />
-                  </button>
-                </div>
-              </motion.div>
-            ))}
+          {/* Exercise list */}
+          <div>
+            <p className="text-[10px] font-bold text-gray-600 uppercase tracking-[0.15em] mb-3 flex items-center gap-2">
+              <div className="w-1 h-1 rounded-full bg-cyan-400" />
+              {quickSuggestion.exercises.length} Exercises
+            </p>
 
+            <div className="space-y-2">
+              {quickSuggestion.exercises.map((ex, i) => (
+                <motion.div key={i} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }}
+                  className="glass rounded-xl p-4">
+                  {/* Exercise name row */}
+                  <div className="flex items-start justify-between mb-3">
+                    <button onClick={() => setSelectedExercise(ex.name)} className="text-left flex-1">
+                      <span className="text-sm font-bold text-white hover:text-cyan-400 transition">{ex.name}</span>
+                    </button>
+                    <button onClick={() => removeExerciseFromQuick(i)} className="p-1 rounded-lg hover:bg-red-500/15 text-gray-600 hover:text-red-400 transition ml-2">
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+
+                  {/* Editable pills row */}
+                  <div className="flex items-center gap-2">
+                    {/* Sets pill */}
+                    <div className="flex items-center bg-white/[0.04] border border-white/[0.06] rounded-lg overflow-hidden">
+                      {editingField === `quick-${i}-sets` ? (
+                        <input type="number" inputMode="numeric" autoFocus defaultValue={ex.sets} min={1} max={20}
+                          className="w-10 bg-transparent py-1.5 text-center text-white text-xs font-bold outline-none"
+                          onBlur={(e) => { updateQuickExercise(i, 'sets', Math.max(1, Number(e.target.value) || 1)); setEditingField(null); }}
+                          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} />
+                      ) : (
+                        <button onClick={() => setEditingField(`quick-${i}-sets`)}
+                          className="px-2.5 py-1.5 text-xs font-bold text-white hover:text-cyan-400 transition">{ex.sets}</button>
+                      )}
+                      <span className="text-[10px] text-gray-600 pr-2.5 uppercase">sets</span>
+                    </div>
+
+                    <span className="text-gray-700 text-xs">×</span>
+
+                    {/* Reps pill */}
+                    <div className="flex items-center bg-white/[0.04] border border-white/[0.06] rounded-lg overflow-hidden">
+                      {editingField === `quick-${i}-reps` ? (
+                        <input type="number" inputMode="numeric" autoFocus defaultValue={ex.reps} min={1} max={100}
+                          className="w-10 bg-transparent py-1.5 text-center text-white text-xs font-bold outline-none"
+                          onBlur={(e) => { updateQuickExercise(i, 'reps', Math.max(1, Number(e.target.value) || 1)); setEditingField(null); }}
+                          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} />
+                      ) : (
+                        <button onClick={() => setEditingField(`quick-${i}-reps`)}
+                          className="px-2.5 py-1.5 text-xs font-bold text-white hover:text-cyan-400 transition">{ex.reps}</button>
+                      )}
+                      <span className="text-[10px] text-gray-600 pr-2.5 uppercase">reps</span>
+                    </div>
+
+                    <span className="text-gray-700 text-xs">@</span>
+
+                    {/* Weight pill */}
+                    <div className="flex items-center bg-cyan-500/[0.06] border border-cyan-500/15 rounded-lg overflow-hidden">
+                      {editingField === `quick-${i}-weight` ? (
+                        <input type="number" inputMode="decimal" autoFocus defaultValue={ex.weight ?? ''} placeholder="—"
+                          className="w-12 bg-transparent py-1.5 text-center text-cyan-400 text-xs font-bold outline-none"
+                          onBlur={(e) => { const v = e.target.value.trim(); updateQuickExercise(i, 'weight', v ? Number(v) : null); setEditingField(null); }}
+                          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} />
+                      ) : (
+                        <button onClick={() => setEditingField(`quick-${i}-weight`)}
+                          className="px-2.5 py-1.5 text-xs font-bold text-cyan-400 hover:text-cyan-300 transition">{ex.weight ?? 'Bwt'}</button>
+                      )}
+                      <span className="text-[10px] text-cyan-600 pr-2.5 uppercase">{ex.weight ? 'kg' : ''}</span>
+                    </div>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+
+            {/* Add exercise */}
             <button onClick={addExerciseToQuick} disabled={addingToQuick}
-              className="w-full py-3 border border-dashed border-white/10 rounded-2xl text-gray-500 hover:text-white hover:border-white/20 text-sm font-bold flex items-center justify-center gap-2 transition disabled:opacity-50">
+              className="w-full mt-2 py-2.5 border border-dashed border-white/8 rounded-xl text-gray-600 hover:text-white hover:border-white/15 text-xs font-bold flex items-center justify-center gap-2 transition disabled:opacity-50">
               {addingToQuick ? <><motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}><RefreshCw size={14} /></motion.div> Adding...</> : <><Plus size={14} /> Add Exercise</>}
             </button>
           </div>
 
+          {/* Log button */}
           {quickLogged ? (
             <div className="w-full py-4 glass bg-green-500/[0.06] border-green-500/20 rounded-2xl flex items-center justify-center gap-2 text-green-400 font-bold text-sm glow-green">
               <CheckCircle2 size={18} /> Logged to History!
@@ -545,33 +567,42 @@ export default function AISuggestion() {
                                 </div>
                               ) : (
                                 <div className="flex justify-between items-center">
-                                  <button onClick={() => setSelectedExercise(ex.name)} className="text-left flex-1">
-                                    <span className="text-sm font-bold text-white hover:text-cyan-400 transition block">{ex.name}</span>
-                                    <span className="text-[10px] font-bold text-gray-600 uppercase mt-0.5 block">{ex.sets} × {ex.reps} • {ex.primaryMuscle}</span>
-                                  </button>
+                                  <div className="flex-1">
+                                    <button onClick={() => setSelectedExercise(ex.name)} className="text-left w-full">
+                                      <span className="text-sm font-bold text-white hover:text-cyan-400 transition block">{ex.name}</span>
+                                    </button>
+                                    <div className="flex items-center gap-1 mt-0.5">
+                                      {editingField === `${day.day}-${i}-sets` ? (
+                                        <input type="number" inputMode="numeric" autoFocus defaultValue={ex.sets} min={1} max={20}
+                                          className="w-8 bg-white/[0.06] border border-cyan-500/30 rounded px-1 py-0.5 text-center text-white text-[10px] font-bold outline-none"
+                                          onBlur={(e) => { updateWeeklyExercise(day.day, i, 'sets', Math.max(1, Number(e.target.value) || 1)); setEditingField(null); }}
+                                          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} />
+                                      ) : (
+                                        <button onClick={() => setEditingField(`${day.day}-${i}-sets`)}
+                                          className="text-[10px] font-bold text-gray-600 uppercase hover:text-cyan-400 transition">{ex.sets}</button>
+                                      )}
+                                      <span className="text-[10px] text-gray-700">×</span>
+                                      {editingField === `${day.day}-${i}-reps` ? (
+                                        <input type="number" inputMode="numeric" autoFocus defaultValue={ex.reps} min={1} max={100}
+                                          className="w-8 bg-white/[0.06] border border-cyan-500/30 rounded px-1 py-0.5 text-center text-white text-[10px] font-bold outline-none"
+                                          onBlur={(e) => { updateWeeklyExercise(day.day, i, 'reps', Math.max(1, Number(e.target.value) || 1)); setEditingField(null); }}
+                                          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} />
+                                      ) : (
+                                        <button onClick={() => setEditingField(`${day.day}-${i}-reps`)}
+                                          className="text-[10px] font-bold text-gray-600 uppercase hover:text-cyan-400 transition">{ex.reps}</button>
+                                      )}
+                                      <span className="text-[10px] text-gray-700">• {ex.primaryMuscle}</span>
+                                    </div>
+                                  </div>
                                   <div className="flex items-center gap-2 ml-2 flex-shrink-0">
-                                    {editingWeight === `${day.day}-${i}` ? (
-                                      <input
-                                        type="number"
-                                        inputMode="decimal"
-                                        autoFocus
-                                        defaultValue={ex.weight ?? ''}
-                                        placeholder="Bwt"
-                                        className="w-16 bg-white/[0.06] border border-cyan-500/30 rounded-lg py-1 px-2 text-center text-cyan-400 text-sm font-bold outline-none"
-                                        onBlur={(e) => {
-                                          const val = e.target.value.trim();
-                                          updateWeeklyWeight(day.day, i, val ? Number(val) : null);
-                                          setEditingWeight(null);
-                                        }}
-                                        onKeyDown={(e) => {
-                                          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-                                        }}
-                                      />
+                                    {editingField === `${day.day}-${i}-weight` ? (
+                                      <input type="number" inputMode="decimal" autoFocus defaultValue={ex.weight ?? ''} placeholder="Bwt"
+                                        className="w-14 bg-white/[0.06] border border-cyan-500/30 rounded-lg py-1 px-1 text-center text-cyan-400 text-sm font-bold outline-none"
+                                        onBlur={(e) => { const v = e.target.value.trim(); updateWeeklyExercise(day.day, i, 'weight', v ? Number(v) : null); setEditingField(null); }}
+                                        onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} />
                                     ) : (
-                                      <button onClick={() => setEditingWeight(`${day.day}-${i}`)}
-                                        className="text-sm font-bold text-cyan-400 hover:bg-white/5 px-2 py-1 rounded-lg transition"
-                                        title="Tap to edit weight"
-                                      >{ex.weight ? `${ex.weight}kg` : 'Bwt'}</button>
+                                      <button onClick={() => setEditingField(`${day.day}-${i}-weight`)}
+                                        className="text-sm font-bold text-cyan-400 hover:bg-white/5 px-1.5 py-0.5 rounded-lg transition">{ex.weight ? `${ex.weight}kg` : 'Bwt'}</button>
                                     )}
                                     <button onClick={() => startSwap(day.day, i, ex)} title="Swap"
                                       className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-500 hover:text-white transition"><RefreshCw size={13} /></button>
